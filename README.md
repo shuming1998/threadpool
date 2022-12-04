@@ -10,6 +10,7 @@ $ ./autobuild.sh
 
 
 ```C++
+#include "threadpool.h"
 // what you want do
 class YourTask : public Task {
 public:
