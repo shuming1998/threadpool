@@ -3,7 +3,6 @@
 
 #include <functional>
 #include <iostream>
-#include <thread>
 #include <chrono>
 
 const int TASK_MAX_SIZE = INT32_MAX;
@@ -23,11 +22,12 @@ ThreadPool::ThreadPool()
 // 线程池析构，将线程池相关的线程资源全部回收
 ThreadPool::~ThreadPool() {
   isPoolRunning_ = false;
-  queueNotEmpty_.notify_all();
-  // 线程间通信，等待线程池中所有线程(阻塞|执行中)返回
+  // 线程间通信，等待线程池中所有线程(阻塞|执行中|执行后刚进while循环)返回
   std::unique_lock<std::mutex> lock(taskQueueMutex_);
+  // 如果任务线程先获取了锁，需要将任务线程的 queueNotEmpty_ 唤醒
+  queueNotEmpty_.notify_all();
   // 等待线程池为空
-  waitForWorkFinished_.wait(lock, [&](){ return threadsMap_.empty(); });
+  waitForWorkFinished_.wait(lock, [&](){ return threadsMap_.size() == 0; });
 }
 
 // 线程函数：从任务队列中消费任务
@@ -39,7 +39,9 @@ void ThreadPool::threadFunc(size_t threadId) {
     {
       //! 先获取锁，控制锁的粒度，只需要在操作任务队列时加锁，应和执行任务分开
       std::unique_lock<std::mutex> lock(taskQueueMutex_);
-      while (taskQueue_.size() == 0) {
+      // 线程池析构的时候，如果是主线程先获得锁，必须再在任务线程中判断一下池是否运行
+      // 如果不判断，任务列表为空时，任务线程可能一直阻塞在 queueNotEmpty_ 上(3|执行后刚进 while 循环)
+      while (isPoolRunning_ && taskQueue_.size() == 0) {
         // cached模式下，回收当前线程池中空闲时间超过阈值的多余线程
         // 每秒钟返回一次，判断是否超时
         if (poolMode_ == PoolMode::MODE_CACHED) {
@@ -60,17 +62,21 @@ void ThreadPool::threadFunc(size_t threadId) {
             }
           }
         } else if (poolMode_ == PoolMode::MODE_FIXED) {
-          // fixed模式下，等待任务队列非空queueNotEmpty条件，如果一直为空可以一直阻塞
+          // fixed 模式下，等待任务队列非空queueNotEmpty条件
           queueNotEmpty_.wait(lock);
         }
         // 线程池即将结束，回收线程资源(1|阻塞的线程)
-        if (!isPoolRunning_) {
-          threadsMap_.erase(threadId);
-          waitForWorkFinished_.notify_all();
-          return;
-        }
+        // if (!isPoolRunning_) {
+        //   threadsMap_.erase(threadId);
+        //   waitForWorkFinished_.notify_all();
+        //   return;
+        // }
       }
-
+      // 回收线程资源(1|阻塞的线程)
+      if (!isPoolRunning_) {
+        // 跳出最外层 while 循环
+        break;
+      }
       // 空闲线程数减一
       --idleThreadSize_;
       // 从任务队列取任务并执行
@@ -83,7 +89,7 @@ void ThreadPool::threadFunc(size_t threadId) {
       if (!taskQueue_.empty()) {
         queueNotEmpty_.notify_all();
       }
-    }
+    } // 控制锁的粒度
     if (taskPtr != nullptr) {
       // 执行任务，将任务的返回值通过 setVal 方法传递给 Result
       taskPtr->exec();

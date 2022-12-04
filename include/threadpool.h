@@ -5,6 +5,7 @@
 #include <memory>
 #include <atomic>
 #include <mutex>
+#include <thread>
 #include <unordered_map>
 #include <condition_variable>
 
@@ -22,7 +23,7 @@ public:
   ThreadPool();
   ~ThreadPool();
   // 开启线程池
-  void start(int initThreadSize = 8);
+  void start(int initThreadSize = std::thread::hardware_concurrency());
   // 设置任务队列上限的阈值
   void setTaskQueueMaxSize(int maxSize_);
   // 生产任务，提交到任务队列
