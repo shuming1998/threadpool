@@ -33,15 +33,22 @@ ThreadPool::~ThreadPool() {
 // 线程函数：从任务队列中消费任务
 void ThreadPool::threadFunc(size_t threadId) {
   auto threadLastWorkTime = std::chrono::high_resolution_clock().now();
-  // 线程持续循环从任务队列取任务
-  while (isPoolRunning_) {
+  // 线程持续从任务队列取任务，线程池析构时，必须把所有任务执行完
+  for (;;) {
     std::shared_ptr<Task> taskPtr;
     {
       //! 先获取锁，控制锁的粒度，只需要在操作任务队列时加锁，应和执行任务分开
       std::unique_lock<std::mutex> lock(taskQueueMutex_);
       // 线程池析构的时候，如果是主线程先获得锁，必须再在任务线程中判断一下池是否运行
       // 如果不判断，任务列表为空时，任务线程可能一直阻塞在 queueNotEmpty_ 上(3|执行后刚进 while 循环)
-      while (isPoolRunning_ && taskQueue_.size() == 0) {
+      while (taskQueue_.size() == 0) {
+        if (!isPoolRunning_) {
+          // 线程执行任务完成，回收(1|阻塞的线程 2|执行任务的线程)
+          threadsMap_.erase(threadId);
+          waitForWorkFinished_.notify_all();
+          //! 结束线程函数就是结束线程
+          return;
+        }
         // cached模式下，回收当前线程池中空闲时间超过阈值的多余线程
         // 每秒钟返回一次，判断是否超时
         if (poolMode_ == PoolMode::MODE_CACHED) {
@@ -72,11 +79,6 @@ void ThreadPool::threadFunc(size_t threadId) {
         //   return;
         // }
       }
-      // 回收线程资源(1|阻塞的线程)
-      if (!isPoolRunning_) {
-        // 跳出最外层 while 循环
-        break;
-      }
       // 空闲线程数减一
       --idleThreadSize_;
       // 从任务队列取任务并执行
@@ -94,15 +96,11 @@ void ThreadPool::threadFunc(size_t threadId) {
       // 执行任务，将任务的返回值通过 setVal 方法传递给 Result
       taskPtr->exec();
     }
-
     // 任务已做完，空闲线程数 +1
     ++idleThreadSize_;
     // 更新线程执行任务结束后的时间
     threadLastWorkTime = std::chrono::high_resolution_clock().now();
   }
-  // 线程执行任务完成，回收(2|执行任务的线程)
-  threadsMap_.erase(threadId);
-  waitForWorkFinished_.notify_all();
 }
 
 // 开启线程池
