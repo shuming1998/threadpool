@@ -1,5 +1,5 @@
-# CPP_Thread_Pooling
-C++ thread pooling (SHARED library after building)
+# threadpool
+C++ thread pool (SHARED library after building)
 
 how to use:
 
