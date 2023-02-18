@@ -4,8 +4,8 @@ C++ thread pool (SHARED library after building)
 how to use:
 
 ```shell
-git clone git@github.com:shuming1998/threadpool.git
-cd threadpool
+$ git clone git@github.com:shuming1998/threadpool.git
+$ cd threadpool
 $ ./autobuild.sh
 ```
 
